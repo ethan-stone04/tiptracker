@@ -1,4 +1,5 @@
 import streamlit as st
+import hmac
 import json
 import os
 import requests
@@ -268,6 +269,20 @@ def _read_secret(key: str):
 GITHUB_TOKEN = _read_secret("github_token") or os.environ.get("GITHUB_TOKEN")
 GIST_ID      = _read_secret("gist_id")      or os.environ.get("GIST_ID")
 USE_GIST     = bool(GITHUB_TOKEN and GIST_ID)
+
+# ── Access gate: require a personal token in the URL (?k=...) ─────────────────
+APP_TOKEN = _read_secret("app_token") or os.environ.get("APP_TOKEN")
+if APP_TOKEN:
+    _incoming = str(st.query_params.get("k", ""))
+    if not hmac.compare_digest(_incoming, APP_TOKEN):
+        st.markdown("# 🍸 Shift Tracker")
+        st.markdown(
+            "<p style='color:#a89070; font-family: \"Cormorant Garamond\", serif; "
+            "font-size:18px; font-style:italic; margin:1rem 0;'>"
+            "This is a private tracker. Access requires a personal link.</p>",
+            unsafe_allow_html=True,
+        )
+        st.stop()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
