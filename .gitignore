@@ -1,0 +1,12 @@
+shifts.json
+profile.json
+__pycache__/
+*.pyc
+.venv/
+venv/
+.streamlit/secrets.toml
+
+# Visual Studio
+.vs/
+TipTracker/
+
