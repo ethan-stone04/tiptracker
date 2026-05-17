@@ -1,6 +1,6 @@
 # 🍸 Tip Tracker
 
-A personal shift- and tip-tracker for the service industry. Built for myself
+A personal shift and tip-tracker for the service industry. Built for myself
 to log shifts, hours, tips, and the position I worked, then see weekly
 breakdowns by role. Speakeasy-themed dark UI, mobile-friendly, accessible
 from any device.
