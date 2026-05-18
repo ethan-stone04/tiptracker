@@ -5,6 +5,9 @@ import re
 import requests
 import secrets
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+LOCAL_TZ = ZoneInfo("America/Chicago")  # CST/CDT — auto-handles DST
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DATA_FILE = "shifts.json"
@@ -358,7 +361,7 @@ def generate_token() -> str:
 
 
 def current_week_key() -> str:
-    today = date.today()
+    today = datetime.now(LOCAL_TZ).date()
     iso = today.isocalendar()
     return f"{iso[0]}-W{iso[1]:02d}"
 
@@ -503,8 +506,8 @@ except Exception:
     st.caption(week_key)
 
 # ── Sunday-night weekly summary popup ─────────────────────────────────────────
-_today = date.today()
-_now = datetime.now()
+_now = datetime.now(LOCAL_TZ)
+_today = _now.date()
 _last_shown = profile.get("last_summary_shown", "")
 if (_today.weekday() == 6 and _now.hour >= 18
         and _last_shown != _today.isoformat() and week):
