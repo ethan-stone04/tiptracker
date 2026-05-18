@@ -139,6 +139,11 @@ h2, h3 { font-family: 'DM Mono', monospace !important; color: #f0e2c4 !important
 }
 [data-baseweb="menu"] li:hover { background-color: #2a1f15 !important; color: #e8c878 !important; }
 
+/* Ensure dropdown popovers stack above everything and accept outside-click-to-close */
+[data-baseweb="popover"], [data-baseweb="layer"] {
+    z-index: 9999 !important;
+}
+
 .stNumberInput button {
     background-color: #2a1f15 !important; color: #c9a961 !important;
     border-color: #3a2f1f !important;
