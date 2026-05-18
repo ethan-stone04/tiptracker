@@ -1,8 +1,9 @@
 import streamlit as st
-import hmac
 import json
 import os
+import re
 import requests
+import secrets
 from datetime import date, datetime
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -270,21 +271,6 @@ GITHUB_TOKEN = _read_secret("github_token") or os.environ.get("GITHUB_TOKEN")
 GIST_ID      = _read_secret("gist_id")      or os.environ.get("GIST_ID")
 USE_GIST     = bool(GITHUB_TOKEN and GIST_ID)
 
-# ── Access gate: require a personal token in the URL (?k=...) ─────────────────
-APP_TOKEN = _read_secret("app_token") or os.environ.get("APP_TOKEN")
-if APP_TOKEN:
-    _incoming = str(st.query_params.get("k", ""))
-    if not hmac.compare_digest(_incoming, APP_TOKEN):
-        st.markdown("# 🍸 Shift Tracker")
-        st.markdown(
-            "<p style='color:#a89070; font-family: \"Cormorant Garamond\", serif; "
-            "font-size:18px; font-style:italic; margin:1rem 0;'>"
-            "This is a private tracker. Access requires a personal link.</p>",
-            unsafe_allow_html=True,
-        )
-        st.stop()
-
-
 @st.cache_data(ttl=300, show_spinner=False)
 def _gist_files() -> dict:
     headers = {
@@ -335,20 +321,40 @@ def _write_json(filename: str, payload: dict):
             f.write(content_str)
 
 
-def load_data() -> dict:
+def _all_data() -> dict:
     return _read_json(DATA_FILE)
 
 
-def save_data(data: dict):
-    _write_json(DATA_FILE, data)
-
-
-def load_profile() -> dict:
+def _all_profiles() -> dict:
     return _read_json(PROFILE_FILE)
 
 
-def save_profile(profile: dict):
-    _write_json(PROFILE_FILE, profile)
+def load_data(token: str) -> dict:
+    return _all_data().get(token, {})
+
+
+def save_data(token: str, data: dict):
+    payload = _all_data()
+    payload[token] = data
+    _write_json(DATA_FILE, payload)
+
+
+def load_profile(token: str) -> dict:
+    return _all_profiles().get(token, {})
+
+
+def save_profile(token: str, profile: dict):
+    payload = _all_profiles()
+    payload[token] = profile
+    _write_json(PROFILE_FILE, payload)
+
+
+def is_known_user(token: str) -> bool:
+    return bool(token) and token in _all_profiles()
+
+
+def generate_token() -> str:
+    return secrets.token_urlsafe(24)
 
 
 def current_week_key() -> str:
@@ -383,69 +389,97 @@ def position_breakdown(week_data: dict) -> dict:
     return out
 
 
-# ── Load state ────────────────────────────────────────────────────────────────
-data = load_data()
-profile = load_profile()
-week_key = current_week_key()
-if week_key not in data:
-    data[week_key] = {}
-week = data[week_key]
+_WEEK_KEY_RE = re.compile(r"^\d{4}-W\d{2}$")
 
-# ── First-time setup: ask for the user's name ────────────────────────────────
-if not profile.get("name"):
+
+def _migrate_legacy_if_needed():
+    """If gist data is in single-tenant format, wrap it under app_token."""
+    owner_token = _read_secret("app_token") or os.environ.get("APP_TOKEN")
+    if not owner_token:
+        return
+
+    shifts_raw = _read_json(DATA_FILE)
+    if shifts_raw and any(_WEEK_KEY_RE.match(str(k)) for k in shifts_raw.keys()):
+        _write_json(DATA_FILE, {owner_token: shifts_raw})
+
+    prof_raw = _read_json(PROFILE_FILE)
+    if prof_raw and "name" in prof_raw and owner_token not in prof_raw:
+        _write_json(PROFILE_FILE, {owner_token: prof_raw})
+
+
+# ── One-time migration from single-tenant to multi-tenant ─────────────────────
+_migrate_legacy_if_needed()
+
+# ── Determine current user from the ?k= URL token ─────────────────────────────
+visitor_token = str(st.query_params.get("k", ""))
+
+# ── Signup flow for new visitors (no token, or token not in profiles) ─────────
+if not is_known_user(visitor_token):
     st.markdown("# 🍸 Shift Tracker")
+
+    if "_signup_token" in st.session_state:
+        new_token = st.session_state["_signup_token"]
+        personal_url = f"https://shift-tracker.streamlit.app/?k={new_token}"
+        st.markdown(
+            "<p style='color:#e8c878; font-family: \"Cormorant Garamond\", serif; "
+            "font-size:22px; font-style:italic; margin:-0.5rem 0 1rem;'>"
+            "Your tracker is ready.</p>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<p style='color:#f0e2c4; font-size:14px;'>"
+            "Bookmark this URL — it's the only way back into your data.</p>",
+            unsafe_allow_html=True,
+        )
+        st.code(personal_url, language=None)
+        st.markdown(
+            "<p style='color:#a89070; font-size:12px; margin-top:0.5rem;'>"
+            "Anyone with this URL has full access to your tips. Keep it private.</p>",
+            unsafe_allow_html=True,
+        )
+        st.link_button(
+            "Open my tracker", personal_url,
+            use_container_width=True, type="primary",
+        )
+        st.stop()
+
     st.markdown(
         "<p style='color:#a89070; font-family: \"Cormorant Garamond\", serif; "
         "font-size:20px; font-style:italic; margin:-0.5rem 0 1rem;'>"
-        "Welcome — let's get you set up.</p>",
+        "Welcome — set up your tracker.</p>",
         unsafe_allow_html=True,
     )
-    with st.form("name_setup"):
+    with st.form("signup"):
         name_input = st.text_input("What should we call you?", placeholder="e.g. Ethan")
         restaurant_input = st.text_input(
             "Where do you work?", placeholder="e.g. The Velvet Room"
         )
         submitted = st.form_submit_button(
-            "Continue", type="primary", use_container_width=True
+            "Create my tracker", type="primary", use_container_width=True
         )
         if submitted:
             if name_input.strip() and restaurant_input.strip():
-                profile["name"] = name_input.strip()
-                profile["restaurant"] = restaurant_input.strip()
-                save_profile(profile)
+                new_token = generate_token()
+                save_profile(new_token, {
+                    "name": name_input.strip(),
+                    "restaurant": restaurant_input.strip(),
+                })
+                st.session_state["_signup_token"] = new_token
                 st.rerun()
             else:
                 st.warning("Please fill out both fields to continue.")
     st.stop()
 
-name = profile["name"]
-
-# ── Upgrade path: existing users who set a name before "restaurant" existed ──
-if not profile.get("restaurant"):
-    st.markdown("# 🍸 Shift Tracker")
-    st.markdown(
-        "<p style='color:#a89070; font-family: \"Cormorant Garamond\", serif; "
-        f"font-size:20px; font-style:italic; margin:-0.5rem 0 1rem;'>"
-        f"One more thing, {name} — where do you work?</p>",
-        unsafe_allow_html=True,
-    )
-    with st.form("restaurant_setup"):
-        restaurant_input = st.text_input(
-            "Restaurant name", placeholder="e.g. The Velvet Room"
-        )
-        submitted = st.form_submit_button(
-            "Continue", type="primary", use_container_width=True
-        )
-        if submitted:
-            if restaurant_input.strip():
-                profile["restaurant"] = restaurant_input.strip()
-                save_profile(profile)
-                st.rerun()
-            else:
-                st.warning("Please enter your restaurant to continue.")
-    st.stop()
-
-restaurant = profile["restaurant"]
+# ── Load current user's state ─────────────────────────────────────────────────
+token       = visitor_token
+profile     = load_profile(token)
+data        = load_data(token)
+week_key    = current_week_key()
+if week_key not in data:
+    data[week_key] = {}
+week        = data[week_key]
+name        = profile.get("name", "")
+restaurant  = profile.get("restaurant", "")
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("# 🍸 Shift Tracker")
@@ -475,7 +509,7 @@ _last_shown = profile.get("last_summary_shown", "")
 if (_today.weekday() == 6 and _now.hour >= 18
         and _last_shown != _today.isoformat() and week):
     profile["last_summary_shown"] = _today.isoformat()
-    save_profile(profile)
+    save_profile(token, profile)
 
     @st.dialog(f"{name}'s Weekly Summary")
     def _weekly_summary_dialog():
@@ -650,7 +684,7 @@ with tab_log:
                     "note": note_new, "position": position_to_save,
                 }
                 data[week_key] = week
-                save_data(data)
+                save_data(token, data)
                 st.success(f"{day_new} logged — ${tips_new:,.2f} in tips!")
                 st.rerun()
 
@@ -715,14 +749,14 @@ with tab_edit:
                     "position": position_to_save,
                 }
                 data[week_key] = week
-                save_data(data)
+                save_data(token, data)
                 st.success(f"{day_edit} updated!")
                 st.rerun()
 
             if delete_shift and day_edit in week:
                 del week[day_edit]
                 data[week_key] = week
-                save_data(data)
+                save_data(token, data)
                 st.warning(f"{day_edit} removed.")
                 st.rerun()
 
