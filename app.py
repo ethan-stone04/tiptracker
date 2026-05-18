@@ -550,9 +550,13 @@ if (_today.weekday() == 6 and _now.hour >= 18
         )
         for pos, totals in position_breakdown(week).items():
             s_word = "shift" if totals["shifts"] == 1 else "shifts"
+            hr_str = (
+                f" · ${totals['tips']/totals['hours']:,.2f}/hr"
+                if totals['hours'] > 0 else ""
+            )
             st.markdown(
                 f"**{pos}** &nbsp;·&nbsp; {totals['shifts']} {s_word} · "
-                f"{totals['hours']:.1f} hrs &nbsp;·&nbsp; "
+                f"{totals['hours']:.1f} hrs{hr_str} &nbsp;·&nbsp; "
                 f"<span style='color:#e8c878; font-weight:600; "
                 f"font-family:\"DM Mono\", monospace;'>"
                 f"${totals['tips']:,.2f}</span>",
@@ -567,11 +571,14 @@ if (_today.weekday() == 6 and _now.hour >= 18
         for day in DAYS:
             if day in week:
                 s = week[day]
+                d_hrs  = s.get("hours", 0)
+                d_tips = s.get("tips",  0)
+                hr_str   = f" · ${d_tips/d_hrs:,.2f}/hr" if d_hrs > 0 else ""
                 pos_str  = f" · {s['position']}" if s.get("position") else ""
                 note_str = f" · {s['note']}"     if s.get("note")     else ""
                 st.markdown(
-                    f"**{day}** — ${s.get('tips', 0):,.2f} &nbsp;·&nbsp; "
-                    f"{s.get('hours', 0):.1f} hrs{pos_str}{note_str}"
+                    f"**{day}** — ${d_tips:,.2f} &nbsp;·&nbsp; "
+                    f"{d_hrs:.1f} hrs{hr_str}{pos_str}{note_str}"
                 )
 
         # ── Grand total ──
@@ -596,7 +603,7 @@ if (_today.weekday() == 6 and _now.hour >= 18
           </div>
           <div style="font-family:'DM Sans', sans-serif; font-size:12px;
                       color:#a89070; margin-top:4px;">
-            {wk_shifts} {"shift" if wk_shifts == 1 else "shifts"} · {wk_hours:.1f} hrs
+            {wk_shifts} {"shift" if wk_shifts == 1 else "shifts"} · {wk_hours:.1f} hrs{f" · ${wk_tips/wk_hours:,.2f}/hr avg" if wk_hours > 0 else ""}
           </div>
         </div>
         """, unsafe_allow_html=True)
@@ -634,6 +641,8 @@ if week:
         note = s.get("note",  "")
         pos  = s.get("position", "")
         detail_parts = [f"{hrs:.1f} hrs"]
+        if hrs > 0:
+            detail_parts.append(f"${tips/hrs:,.2f}/hr")
         if pos:
             detail_parts.append(pos)
         if note:
@@ -816,10 +825,14 @@ if past_weeks:
                 if day not in data[wk]:
                     continue
                 s = data[wk][day]
+                d_hrs  = s.get("hours", 0)
+                d_tips = s.get("tips",  0)
+                hr_str   = f" · ${d_tips/d_hrs:,.2f}/hr" if d_hrs > 0 else ""
                 pos_str  = f" · {s['position']}" if s.get("position") else ""
                 note_str = f" · {s['note']}"     if s.get("note")     else ""
                 st.markdown(
-                    f"**{day}** — ${s.get('tips', 0):,.2f} &nbsp;·&nbsp; "
-                    f"{s.get('hours', 0):.1f} hrs{pos_str}{note_str}"
+                    f"**{day}** — ${d_tips:,.2f} &nbsp;·&nbsp; "
+                    f"{d_hrs:.1f} hrs{hr_str}{pos_str}{note_str}"
                 )
-            st.caption(f"{wk_shifts} shifts · {wk_hours:.1f} hrs total")
+            avg_str = f" · ${wk_tips/wk_hours:,.2f}/hr avg" if wk_hours > 0 else ""
+            st.caption(f"{wk_shifts} shifts · {wk_hours:.1f} hrs total{avg_str}")
