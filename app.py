@@ -139,9 +139,23 @@ h2, h3 { font-family: 'DM Mono', monospace !important; color: #f0e2c4 !important
 }
 [data-baseweb="menu"] li:hover { background-color: #2a1f15 !important; color: #e8c878 !important; }
 
-/* Ensure dropdown popovers stack above everything and accept outside-click-to-close */
-[data-baseweb="popover"], [data-baseweb="layer"] {
-    z-index: 9999 !important;
+/* ── Pills (Day / Position selectors) ──────────────────────────────────── */
+[data-testid="stPills"] button {
+    background: linear-gradient(180deg, #2a1f15 0%, #1f1810 100%) !important;
+    color: #a89070 !important;
+    border: 1px solid #3a2f1f !important;
+    font-family: 'DM Mono', monospace !important;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    font-size: 11px !important; font-weight: 500 !important;
+    transition: all 0.15s ease !important;
+}
+[data-testid="stPills"] button:hover {
+    border-color: #c9a961 !important; color: #e8c878 !important;
+}
+[data-testid="stPills"] button[aria-pressed="true"],
+[data-testid="stPills"] button[aria-checked="true"] {
+    background: linear-gradient(180deg, #d4af6a 0%, #a8893f 100%) !important;
+    color: #14100c !important; border-color: #c9a961 !important;
 }
 
 .stNumberInput button {
@@ -656,15 +670,19 @@ with tab_log:
         st.success("Every day this week has been logged!")
     else:
         with st.form("log_form", clear_on_submit=True):
+            day_new = st.pills(
+                "Day", unlogged_days, default=unlogged_days[0],
+                selection_mode="single",
+            )
             col1, col2 = st.columns(2)
             with col1:
-                day_new   = st.selectbox("Day", unlogged_days)
                 hours_new = st.number_input(
                     "Hours worked", min_value=0.0, max_value=24.0,
                     step=0.5, value=6.0, format="%.1f"
                 )
-                position_new = st.selectbox(
-                    "Position", ["Serving", "Bartending", "Other"]
+                position_new = st.pills(
+                    "Position", ["Serving", "Bartending", "Other"],
+                    default="Serving", selection_mode="single",
                 )
             with col2:
                 tips_new = st.number_input(
@@ -682,19 +700,22 @@ with tab_log:
                 "Save shift", use_container_width=True, type="primary"
             )
             if submitted:
-                position_to_save = (
-                    position_other_new.strip()
-                    if position_new == "Other" and position_other_new.strip()
-                    else position_new
-                )
-                week[day_new] = {
-                    "hours": hours_new, "tips": tips_new,
-                    "note": note_new, "position": position_to_save,
-                }
-                data[week_key] = week
-                save_data(token, data)
-                st.success(f"{day_new} logged — ${tips_new:,.2f} in tips!")
-                st.rerun()
+                if not day_new or not position_new:
+                    st.warning("Please pick a day and a position.")
+                else:
+                    position_to_save = (
+                        position_other_new.strip()
+                        if position_new == "Other" and position_other_new.strip()
+                        else position_new
+                    )
+                    week[day_new] = {
+                        "hours": hours_new, "tips": tips_new,
+                        "note": note_new, "position": position_to_save,
+                    }
+                    data[week_key] = week
+                    save_data(token, data)
+                    st.success(f"{day_new} logged — ${tips_new:,.2f} in tips!")
+                    st.rerun()
 
 # ── Tab 2: Edit existing shift ────────────────────────────────────────────────
 with tab_edit:
@@ -703,18 +724,20 @@ with tab_edit:
     else:
         with st.form("edit_form", clear_on_submit=False):
             # Default the selector to the most recently logged day
-            default_idx = DAYS.index(logged_days[-1])
-            day_edit = st.selectbox("Select day to edit", DAYS, index=default_idx)
+            day_edit = st.pills(
+                "Select day to edit", DAYS, default=logged_days[-1],
+                selection_mode="single",
+            )
 
-            existing = week.get(day_edit, {})
+            existing = week.get(day_edit, {}) if day_edit else {}
             existing_pos = existing.get("position", "")
             known_positions = ["Serving", "Bartending", "Other"]
             if existing_pos in ("Serving", "Bartending"):
-                initial_pos_idx, initial_pos_other = known_positions.index(existing_pos), ""
+                initial_pos, initial_pos_other = existing_pos, ""
             elif existing_pos:
-                initial_pos_idx, initial_pos_other = 2, existing_pos
+                initial_pos, initial_pos_other = "Other", existing_pos
             else:
-                initial_pos_idx, initial_pos_other = 0, ""
+                initial_pos, initial_pos_other = "Serving", ""
 
             col1, col2 = st.columns(2)
             with col1:
@@ -722,8 +745,9 @@ with tab_edit:
                     "Hours worked", min_value=0.0, max_value=24.0,
                     step=0.5, value=float(existing.get("hours", 6.0)), format="%.1f"
                 )
-                position_edit = st.selectbox(
-                    "Position", known_positions, index=initial_pos_idx
+                position_edit = st.pills(
+                    "Position", known_positions, default=initial_pos,
+                    selection_mode="single",
                 )
             with col2:
                 tips_edit = st.number_input(
@@ -747,19 +771,22 @@ with tab_edit:
                 )
 
             if save_edit:
-                position_to_save = (
-                    position_other_edit.strip()
-                    if position_edit == "Other" and position_other_edit.strip()
-                    else position_edit
-                )
-                week[day_edit] = {
-                    "hours": hours_edit, "tips": tips_edit, "note": note_edit,
-                    "position": position_to_save,
-                }
-                data[week_key] = week
-                save_data(token, data)
-                st.success(f"{day_edit} updated!")
-                st.rerun()
+                if not day_edit or not position_edit:
+                    st.warning("Please pick a day and a position.")
+                else:
+                    position_to_save = (
+                        position_other_edit.strip()
+                        if position_edit == "Other" and position_other_edit.strip()
+                        else position_edit
+                    )
+                    week[day_edit] = {
+                        "hours": hours_edit, "tips": tips_edit, "note": note_edit,
+                        "position": position_to_save,
+                    }
+                    data[week_key] = week
+                    save_data(token, data)
+                    st.success(f"{day_edit} updated!")
+                    st.rerun()
 
             if delete_shift and day_edit in week:
                 del week[day_edit]
