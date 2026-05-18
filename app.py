@@ -241,6 +241,13 @@ h2, h3 { font-family: 'DM Mono', monospace !important; color: #f0e2c4 !important
 [data-testid="stExpander"] summary:hover { background: #241a10 !important; }
 [data-testid="stExpander"] svg { fill: #c9a961 !important; color: #c9a961 !important; }
 
+/* ── Hide invisible JS-injection iframes ──────────────────────────────── */
+[data-testid="stCustomComponentV1"], [data-testid="stIFrame"] {
+    height: 0 !important; min-height: 0 !important;
+    margin: 0 !important; padding: 0 !important;
+    overflow: hidden !important;
+}
+
 /* ── Mobile responsive ────────────────────────────────────────────────── */
 @media (max-width: 640px) {
     [data-testid="stMainBlockContainer"], [data-testid="stAppViewContainer"] .main .block-container {
@@ -429,6 +436,14 @@ def _migrate_legacy_if_needed():
         _write_json(PROFILE_FILE, {owner_token: prof_raw})
 
 
+def _inject_js(js: str):
+    """Run a snippet of JS in the parent window via a 0-height iframe."""
+    st.components.v1.html(
+        f"<script>(function(){{ try {{ {js} }} catch (e) {{ console.warn(e); }} }})();</script>",
+        height=0,
+    )
+
+
 # ── One-time migration from single-tenant to multi-tenant ─────────────────────
 _migrate_legacy_if_needed()
 
@@ -437,11 +452,31 @@ visitor_token = str(st.query_params.get("k", ""))
 
 # ── Signup flow for new visitors (no token, or token not in profiles) ─────────
 if not is_known_user(visitor_token):
+    # Auto-recover from a token previously saved in this browser's localStorage.
+    # If there's a stale ?k= in the URL, clear it instead to prevent redirect loops.
+    if visitor_token:
+        _inject_js("window.parent.localStorage.removeItem('shift_tracker_token');")
+    else:
+        _inject_js(
+            "var t = window.parent.localStorage.getItem('shift_tracker_token');"
+            "if (t) {"
+            "  var u = new URL(window.parent.location.href);"
+            "  u.searchParams.set('k', t);"
+            "  window.parent.location.replace(u.toString());"
+            "}"
+        )
+
     st.markdown("# 🍸 Shift Tracker")
 
     if "_signup_token" in st.session_state:
         new_token = st.session_state["_signup_token"]
         personal_url = f"https://shift-tracker.streamlit.app/?k={new_token}"
+
+        # Remember this token on this browser so closing the tab doesn't lose access
+        _inject_js(
+            f"window.parent.localStorage.setItem('shift_tracker_token', "
+            f"{json.dumps(new_token)});"
+        )
         st.markdown(
             "<p style='color:#e8c878; font-family: \"Cormorant Garamond\", serif; "
             "font-size:22px; font-style:italic; margin:-0.5rem 0 1rem;'>"
@@ -496,6 +531,12 @@ if not is_known_user(visitor_token):
 token       = visitor_token
 profile     = load_profile(token)
 data        = load_data(token)
+
+# Persist this token on the browser so a base-URL visit later auto-restores it
+_inject_js(
+    f"window.parent.localStorage.setItem('shift_tracker_token', "
+    f"{json.dumps(token)});"
+)
 week_key    = current_week_key()
 if week_key not in data:
     data[week_key] = {}
@@ -836,3 +877,16 @@ if past_weeks:
                 )
             avg_str = f" · ${wk_tips/wk_hours:,.2f}/hr avg" if wk_hours > 0 else ""
             st.caption(f"{wk_shifts} shifts · {wk_hours:.1f} hrs total{avg_str}")
+
+# ── Forget this device (clears localStorage and returns to base URL) ─────────
+if st.session_state.get("_logout"):
+    _inject_js(
+        "window.parent.localStorage.removeItem('shift_tracker_token');"
+        "window.parent.location.replace(window.parent.location.pathname);"
+    )
+    st.stop()
+
+st.markdown("<div style='margin-top:3rem;'></div>", unsafe_allow_html=True)
+if st.button("Forget this device", use_container_width=False):
+    st.session_state["_logout"] = True
+    st.rerun()
