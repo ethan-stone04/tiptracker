@@ -4,7 +4,8 @@ import os
 import re
 import requests
 import secrets
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from calendar import monthrange
 from zoneinfo import ZoneInfo
 
 LOCAL_TZ = ZoneInfo("America/Chicago")  # CST/CDT — auto-handles DST
@@ -248,6 +249,78 @@ h2, h3 { font-family: 'DM Mono', monospace !important; color: #f0e2c4 !important
     overflow: hidden !important;
 }
 
+/* ── Page nav (Week / Calendar buttons) ─────────────────────────────────── */
+.nav-row { margin-bottom: 1.25rem; }
+
+/* ── Calendar grid ──────────────────────────────────────────────────────── */
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-top: 1rem;
+}
+.cal-header {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: #a89070;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    text-align: center;
+    padding: 0.4rem 0 0.6rem;
+}
+.cal-cell {
+    background: linear-gradient(180deg, #1a130b 0%, #14100c 100%);
+    border: 1px solid #3a2f1f;
+    border-radius: 6px;
+    padding: 6px 5px;
+    min-height: 78px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    box-shadow: inset 0 1px 0 rgba(201,169,97,0.04);
+}
+.cal-cell.empty {
+    background: transparent;
+    border: 1px solid transparent;
+    box-shadow: none;
+}
+.cal-cell.has-shift {
+    background: linear-gradient(145deg, #241a10 0%, #1a130b 100%);
+    border-color: #5a4630;
+}
+.cal-cell.today {
+    border: 1.5px solid #c9a961;
+    box-shadow: 0 0 10px rgba(201,169,97,0.18);
+}
+.cal-cell .day-num {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: #a89070;
+    font-weight: 500;
+}
+.cal-cell.today .day-num { color: #e8c878; }
+.cal-cell .day-tip {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    margin-top: auto;
+    background: linear-gradient(135deg, #c9a961 0%, #e8c878 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.cal-cell .day-rate {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: #a89070;
+}
+
+/* 4-metric rows wrap to 2x2 on narrow screens */
+@media (max-width: 540px) {
+    .metric-row { flex-wrap: wrap; }
+    .metric-box { flex: 1 1 calc(50% - 4px); }
+}
+
 /* ── Mobile responsive ────────────────────────────────────────────────── */
 @media (max-width: 640px) {
     [data-testid="stMainBlockContainer"], [data-testid="stAppViewContainer"] .main .block-container {
@@ -284,6 +357,14 @@ h2, h3 { font-family: 'DM Mono', monospace !important; color: #f0e2c4 !important
     [data-testid="stDialog"] > div, [role="dialog"] {
         width: 95vw !important; max-width: 95vw !important;
     }
+
+    /* Calendar grid shrinks on phone */
+    .calendar-grid { gap: 2px; }
+    .cal-header { font-size: 9px; padding: 0.3rem 0 0.4rem; }
+    .cal-cell { padding: 3px 2px; min-height: 56px; }
+    .cal-cell .day-num { font-size: 10px; }
+    .cal-cell .day-tip { font-size: 11px; }
+    .cal-cell .day-rate { font-size: 9px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -442,6 +523,152 @@ def _inject_js(js: str):
         f"<script>(function(){{ try {{ {js} }} catch (e) {{ console.warn(e); }} }})();</script>",
         height=0,
     )
+
+
+# ── Calendar page helpers ─────────────────────────────────────────────────────
+def month_label_for(year: int, month: int) -> str:
+    return date(year, month, 1).strftime("%B %Y")
+
+
+def prev_month(year: int, month: int) -> tuple:
+    return (year - 1, 12) if month == 1 else (year, month - 1)
+
+
+def next_month(year: int, month: int) -> tuple:
+    return (year + 1, 1) if month == 12 else (year, month + 1)
+
+
+def shifts_in_month(user_data: dict, year: int, month: int) -> dict:
+    """Returns {date: shift_dict} for shifts that fall in the given month."""
+    out: dict = {}
+    for wk_key, wk_data in user_data.items():
+        if not _WEEK_KEY_RE.match(str(wk_key)):
+            continue
+        yr, wk = int(wk_key[:4]), int(wk_key[6:])
+        try:
+            monday = datetime.strptime(f"{yr}-W{wk:02d}-1", "%G-W%V-%u").date()
+        except Exception:
+            continue
+        for i, day_name in enumerate(DAYS):
+            if day_name not in wk_data:
+                continue
+            d = monday + timedelta(days=i)
+            if d.year == year and d.month == month:
+                out[d] = wk_data[day_name]
+    return out
+
+
+def month_grid(year: int, month: int) -> list:
+    """Returns weeks (Sun-Sat) as list of lists of date|None."""
+    first = date(year, month, 1)
+    last = monthrange(year, month)[1]
+    # Mon=0..Sun=6 → Sun=0..Sat=6 for US-style grid
+    leading = (first.weekday() + 1) % 7
+    cells: list = [None] * leading
+    for d in range(1, last + 1):
+        cells.append(date(year, month, d))
+    while len(cells) % 7 != 0:
+        cells.append(None)
+    return [cells[i:i + 7] for i in range(0, len(cells), 7)]
+
+
+def render_calendar_page():
+    today = datetime.now(LOCAL_TZ).date()
+    if "cal_year" not in st.session_state:
+        st.session_state.cal_year = today.year
+        st.session_state.cal_month = today.month
+
+    yr, mo = st.session_state.cal_year, st.session_state.cal_month
+
+    # Month nav row
+    c_prev, c_mid, c_next = st.columns([1, 4, 1])
+    with c_prev:
+        if st.button("←", use_container_width=True, key="cal_prev"):
+            st.session_state.cal_year, st.session_state.cal_month = prev_month(yr, mo)
+            st.rerun()
+    with c_mid:
+        st.markdown(
+            f"<h3 style='text-align:center; font-family:\"Cormorant Garamond\", serif; "
+            f"color:#e8c878; margin:0.25rem 0; font-weight:600; font-style:italic;'>"
+            f"{month_label_for(yr, mo)}</h3>",
+            unsafe_allow_html=True,
+        )
+    with c_next:
+        if st.button("→", use_container_width=True, key="cal_next"):
+            st.session_state.cal_year, st.session_state.cal_month = next_month(yr, mo)
+            st.rerun()
+
+    # Aggregate
+    m_shifts_map = shifts_in_month(data, yr, mo)
+    m_count  = len(m_shifts_map)
+    m_hours  = sum(s.get("hours", 0) for s in m_shifts_map.values())
+    m_tips   = sum(s.get("tips",  0) for s in m_shifts_map.values())
+    m_rate   = m_tips / m_hours if m_hours > 0 else 0
+
+    # Monthly stats row (4 boxes — wraps to 2x2 on narrow screens via CSS)
+    st.markdown(f"""
+    <div class="metric-row" style="margin-top:1rem;">
+      <div class="metric-box">
+        <div class="label">Shifts</div>
+        <div class="value">{m_count}</div>
+      </div>
+      <div class="metric-box">
+        <div class="label">Hours</div>
+        <div class="value">{m_hours:.1f}</div>
+      </div>
+      <div class="metric-box">
+        <div class="label">Tips</div>
+        <div class="value">${m_tips:,.2f}</div>
+      </div>
+      <div class="metric-box">
+        <div class="label">Avg $/hr</div>
+        <div class="value">${m_rate:,.2f}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Calendar grid
+    grid = month_grid(yr, mo)
+    parts = ['<div class="calendar-grid">']
+    for hdr in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]:
+        parts.append(f'<div class="cal-header">{hdr}</div>')
+    for week_row in grid:
+        for cell in week_row:
+            if cell is None:
+                parts.append('<div class="cal-cell empty"></div>')
+                continue
+            shift = m_shifts_map.get(cell)
+            klass = "cal-cell"
+            if shift:
+                klass += " has-shift"
+            if cell == today:
+                klass += " today"
+            body = f'<div class="day-num">{cell.day}</div>'
+            if shift:
+                s_tips = shift.get("tips", 0)
+                s_hrs  = shift.get("hours", 0)
+                body += f'<div class="day-tip">${s_tips:,.0f}</div>'
+                if s_hrs > 0:
+                    body += f'<div class="day-rate">${s_tips/s_hrs:.0f}/hr</div>'
+            parts.append(f'<div class="{klass}">{body}</div>')
+    parts.append('</div>')
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+    if m_count == 0:
+        st.info("No shifts logged this month yet.")
+
+
+def render_logout_footer():
+    if st.session_state.get("_logout"):
+        _inject_js(
+            "window.parent.localStorage.removeItem('shift_tracker_token');"
+            "window.parent.location.replace(window.parent.location.pathname);"
+        )
+        st.stop()
+    st.markdown("<div style='margin-top:3rem;'></div>", unsafe_allow_html=True)
+    if st.button("Forget this device", use_container_width=False, key="logout_btn"):
+        st.session_state["_logout"] = True
+        st.rerun()
 
 
 # ── One-time migration from single-tenant to multi-tenant ─────────────────────
@@ -649,6 +876,34 @@ if (_today.weekday() == 6 and _now.hour >= 18
         </div>
         """, unsafe_allow_html=True)
     _weekly_summary_dialog()
+
+# ── Top-level navigation: This Week | Calendar ───────────────────────────────
+if "page" not in st.session_state:
+    st.session_state.page = "week"
+
+_nav_l, _nav_r = st.columns(2)
+with _nav_l:
+    if st.button(
+        "📋  This Week", use_container_width=True,
+        type="primary" if st.session_state.page == "week" else "secondary",
+        key="nav_week",
+    ):
+        st.session_state.page = "week"
+        st.rerun()
+with _nav_r:
+    if st.button(
+        "📅  Calendar", use_container_width=True,
+        type="primary" if st.session_state.page == "calendar" else "secondary",
+        key="nav_calendar",
+    ):
+        st.session_state.page = "calendar"
+        st.rerun()
+
+# Calendar page renders then short-circuits the rest of the script
+if st.session_state.page == "calendar":
+    render_calendar_page()
+    render_logout_footer()
+    st.stop()
 
 # ── Summary metrics ───────────────────────────────────────────────────────────
 hours, tips_total, shift_count = week_totals(week)
@@ -878,15 +1133,5 @@ if past_weeks:
             avg_str = f" · ${wk_tips/wk_hours:,.2f}/hr avg" if wk_hours > 0 else ""
             st.caption(f"{wk_shifts} shifts · {wk_hours:.1f} hrs total{avg_str}")
 
-# ── Forget this device (clears localStorage and returns to base URL) ─────────
-if st.session_state.get("_logout"):
-    _inject_js(
-        "window.parent.localStorage.removeItem('shift_tracker_token');"
-        "window.parent.location.replace(window.parent.location.pathname);"
-    )
-    st.stop()
-
-st.markdown("<div style='margin-top:3rem;'></div>", unsafe_allow_html=True)
-if st.button("Forget this device", use_container_width=False):
-    st.session_state["_logout"] = True
-    st.rerun()
+# ── Footer: forget-this-device button (renders on both pages) ───────────────
+render_logout_footer()
